@@ -1,10 +1,15 @@
 package com.bintianqi.owndroid
 
+import android.Manifest
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build.VERSION
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -12,17 +17,18 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
@@ -31,9 +37,183 @@ import androidx.compose.material3.MaterialTheme.typography
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
+import com.bintianqi.owndroid.ui.theme.OwnDroidTheme
+import java.util.Locale
+
+class MainActivity : BaseActivity() {
+    private val viewModel: MyViewModel by viewModels()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        
+        // הוספה: מתן הרשאות אוטומטי כ-Device Owner
+        autoGrantUsageStatsPermission()
+        // הוספה: הפעלת הניטור ב-ViewModel
+        viewModel.startScreenMonitoring()
+
+        val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+        if (VERSION.SDK_INT >= 33) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
+        enableEdgeToEdge()
+        setContent {
+            OwnDroidTheme {
+                val zhCN = Locale.getDefault() == Locale.CHINA || Locale.getDefault() == Locale.SIMPLIFIED_CHINESE
+                Scaffold(
+                    topBar = {
+                        @OptIn(ExperimentalMaterial3Api::class)
+                        LargeTopAppBar(
+                            title = { Text(stringResource(R.string.app_name)) },
+                            actions = {
+                                IconButton(onClick = { /* הוסף ניווט להגדרות אם יש */ }) {
+                                    Icon(Icons.Default.Settings, null)
+                                }
+                            }
+                        )
+                    }
+                ) { innerPadding ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding)
+                            .background(colorScheme.background)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        // הלוגיקה המקורית של האפליקציה
+                        if (!SP.managedProfileActivated) {
+                            HomeItem(R.drawable.ic_work_profile, R.string.managed_profile, zhCN) {
+                                // הקוד המקורי להפעלת פרופיל עבודה
+                            }
+                        }
+
+                        // הוספה: ממשק בחירת המסכים לחסימה
+                        BlockedScreensSection()
+
+                        Spacer(Modifier.height(50.dp))
+                    }
+                }
+                DhizukuErrorDialog {
+                    finish()
+                }
+            }
+        }
+    }
+
+    private fun autoGrantUsageStatsPermission() {
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = ComponentName(this, Receiver::class.java)
+        if (dpm.isDeviceOwnerApp(packageName)) {
+            try {
+                dpm.setPermissionGrantState(
+                    admin, packageName,
+                    Manifest.permission.PACKAGE_USAGE_STATS,
+                    DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
+                )
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+    }
+
+    @Composable
+    private fun HomeItem(imgVector: Int, name: Int, zhCN: Boolean, onClick: () -> Unit) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Spacer(Modifier.padding(start = 30.dp))
+            Icon(
+                painter = painterResource(imgVector),
+                contentDescription = null
+            )
+            Spacer(Modifier.padding(start = 15.dp))
+            Text(
+                text = stringResource(name),
+                style = typography.headlineSmall,
+                modifier = Modifier.padding(bottom = if (zhCN) { 2 } else { 0 }.dp)
+            )
+        }
+    }
+
+    @Composable
+    fun BlockedScreensSection() {
+        val screens = mapOf(
+            "פרטי אפליקציה (Force Stop)" to "com.android.settings.applications.InstalledAppDetails",
+            "תיקון צבעים (Daltonizer)" to "com.android.settings.Settings\$AccessibilityDaltonizerSettingsActivity",
+            "היפוך צבעים" to "com.android.settings.Settings\$AccessibilityInversionSettingsActivity",
+            "אפשרויות מפתח" to "com.android.settings.Settings\$DevelopmentSettingsDashboardActivity"
+        )
+
+        Column(Modifier.padding(16.dp)) {
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Text("אבטחת מסכי מערכת", style = typography.titleLarge)
+            Spacer(Modifier.height(8.dp))
+            screens.forEach { (label, path) ->
+                var isChecked by remember { mutableStateOf(SP.blockedActivities.contains(path)) }
+                Row(
+                    Modifier.fillMaxWidth().clickable {
+                        isChecked = !isChecked
+                        val current = SP.blockedActivities.toMutableSet()
+                        if (isChecked) current.add(path) else current.remove(path)
+                        SP.blockedActivities = current
+                    }.padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(checked = isChecked, onCheckedChange = null)
+                    Text(label, Modifier.padding(start = 12.dp))
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun DhizukuErrorDialog(onClose: () -> Unit) {
+        val status by dhizukuErrorStatus.collectAsState()
+        if (status != 0) {
+            LaunchedEffect(Unit) {
+                SP.dhizuku = false
+            }
+            AlertDialog(
+                onDismissRequest = {},
+                confirmButton = {
+                    TextButton(onClick = onClose) {
+                        Text(stringResource(R.string.confirm))
+                    }
+                },
+                title = { Text(stringResource(R.string.dhizuku)) },
+                text = {
+                    val text = stringResource(
+                        when(status){
+                            1 -> R.string.failed_to_init_dhizuku
+                            2 -> R.string.dhizuku_permission_not_granted
+                            else -> R.string.failed_to_init_dhizuku
+                        }
+                    )
+                    Text(text)
+                },
+                properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
+            )
+        }
+    }
+}
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
