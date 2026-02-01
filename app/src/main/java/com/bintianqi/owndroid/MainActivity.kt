@@ -4,36 +4,92 @@ import android.Manifest
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build.VERSION
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LargeTopAppBar
-import androidx.compose.material3.MaterialTheme.colorScheme
-import androidx.compose.material3.MaterialTheme.typography
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.bintianqi.owndroid.ui.theme.OwnDroidTheme
+
+class MainActivity : BaseActivity() {
+    private val viewModel: MyViewModel by viewModels()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        
+        // הענקת הרשאה אוטומטית כ-Device Owner
+        autoGrantUsageStats()
+        
+        // הפעלת הניטור ב-ViewModel
+        viewModel.startScreenMonitoring()
+
+        setContent {
+            OwnDroidTheme {
+                Scaffold { innerPadding ->
+                    Column(
+                        modifier = Modifier
+                            .padding(innerPadding)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        // ממשק בחירת המסכים
+                        BlockedScreensSection()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun autoGrantUsageStats() {
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = ComponentName(this, Receiver::class.java)
+        if (dpm.isDeviceOwnerApp(packageName)) {
+            try {
+                dpm.setPermissionGrantState(admin, packageName, 
+                    Manifest.permission.PACKAGE_USAGE_STATS, 
+                    DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED)
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+    }
+
+    @Composable
+    fun BlockedScreensSection() {
+        val screens = mapOf(
+            "פרטי אפליקציה (Force Stop)" to "com.android.settings.applications.InstalledAppDetails",
+            "תיקון צבעים (Daltonizer)" to "com.android.settings.Settings\$AccessibilityDaltonizerSettingsActivity",
+            "היפוך צבעים" to "com.android.settings.Settings\$AccessibilityInversionSettingsActivity",
+            "אפשרויות מפתח" to "com.android.settings.Settings\$DevelopmentSettingsDashboardActivity"
+        )
+
+        Column(Modifier.padding(16.dp)) {
+            Text("אבטחת מסכי מערכת", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(10.dp))
+            screens.forEach { (label, path) ->
+                var isChecked by remember { mutableStateOf(SP.blockedActivities.contains(path)) }
+                Row(
+                    Modifier.fillMaxWidth().clickable {
+                        isChecked = !isChecked
+                        val current = SP.blockedActivities.toMutableSet()
+                        if (isChecked) current.add(path) else current.remove(path)
+                        SP.blockedActivities = current
+                    }.padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(checked = isChecked, onCheckedChange = null)
+                    Text(label, Modifier.padding(start = 12.dp))
+                }
+            }
+        }
+    }
+}
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
