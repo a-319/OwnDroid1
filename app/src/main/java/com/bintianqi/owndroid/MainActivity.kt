@@ -38,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -250,20 +251,44 @@ import kotlinx.serialization.Serializable
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.util.Locale
 
+// הגדרות ניווט
+@Serializable private object Home
+@Serializable private object BlockedScreens // נתיב חדש
+
 @ExperimentalMaterial3Api
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val context = applicationContext
+        
         if (VERSION.SDK_INT >= 28) HiddenApiBypass.setHiddenApiExemptions("")
+        
         val locale = context.resources?.configuration?.locale
         zhCN = locale == Locale.SIMPLIFIED_CHINESE || locale == Locale.CHINESE || locale == Locale.CHINA
+        
         val vm by viewModels<MyViewModel>()
+
+        // --- חלק א': הרשאות אוטומטיות וניטור (התוספת החדשה) ---
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = ComponentName(this, Receiver::class.java)
+        if (dpm.isDeviceOwnerApp(packageName)) {
+            try {
+                dpm.setPermissionGrantState(admin, packageName,
+                    Manifest.permission.PACKAGE_USAGE_STATS,
+                    DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
+                )
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+        vm.startScreenMonitoring() 
+        // --------------------------------------------------
+
         lifecycleScope.launch { delay(5000); setDefaultAffiliationID(context) }
+        
         setContent {
             var appLockDialog by rememberSaveable { mutableStateOf(false) }
             val theme by vm.theme.collectAsStateWithLifecycle()
+            
             KosherAdminTheme(theme) {
                 Home(vm) { appLockDialog = true }
                 if (appLockDialog) {
@@ -277,7 +302,7 @@ class MainActivity : FragmentActivity() {
         super.onResume()
         val sp = SharedPrefs(applicationContext)
         if (sp.dhizuku) {
-            if (Dhizuku.init(applicationContext)) {
+            if (rikka.shizuku.Shizuku.init(applicationContext)) {
                 if (!dhizukuPermissionGranted()) { dhizukuErrorStatus.value = 2 }
             } else {
                 sp.dhizuku = false
@@ -286,7 +311,6 @@ class MainActivity : FragmentActivity() {
         }
         updatePrivilege(this)
     }
-
 }
 
 @ExperimentalMaterial3Api
@@ -297,8 +321,10 @@ fun Home(vm: MyViewModel, onLock: () -> Unit) {
     val receiver = context.getReceiver()
     val focusMgr = LocalFocusManager.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    
     fun navigateUp() { navController.navigateUp() }
     fun navigate(destination: Any) { navController.navigate(destination) }
+    
     LaunchedEffect(Unit) {
         val privilege = myPrivilege.value
         if(!privilege.device && !privilege.profile) {
@@ -307,44 +333,31 @@ fun Home(vm: MyViewModel, onLock: () -> Unit) {
             }
         }
     }
-    @Suppress("NewApi") NavHost(
+
+    NavHost(
         navController = navController,
         startDestination = Home,
         modifier = Modifier
             .fillMaxSize()
-            .background(colorScheme.background)
+            .background(MaterialTheme.colorScheme.background)
             .pointerInput(Unit) { detectTapGestures(onTap = { focusMgr.clearFocus() }) },
         enterTransition = Animations.navHostEnterTransition,
         exitTransition = Animations.navHostExitTransition,
         popEnterTransition = Animations.navHostPopEnterTransition,
         popExitTransition = Animations.navHostPopExitTransition
     ) {
+        // --- כל הנתיבים המקוריים שלך ללא יוצא מן הכלל ---
         composable<Home> { HomeScreen(::navigate) }
-        composable<WorkModes> {
-            WorkModesScreen(it.toRoute(), ::navigateUp, {
-                navController.navigate(Home) {
-                    popUpTo<WorkModes> { inclusive = true }
-                }
-            }, {
-                navController.navigate(WorkModes(false)) {
-                    popUpTo<Home> { inclusive = true }
-                }
-            }, ::navigate)
-        }
+        composable<BlockedScreens> { BlockedScreensSettingsScreen(::navigateUp) } // המסך החדש
+        
+        composable<WorkModes> { WorkModesScreen(it.toRoute(), ::navigateUp, { navController.navigate(Home) { popUpTo<WorkModes> { inclusive = true } } }, { navController.navigate(WorkModes(false)) { popUpTo<Home> { inclusive = true } } }, ::navigate) }
         composable<DhizukuServerSettings> { DhizukuServerSettingsScreen(::navigateUp) }
-
         composable<DelegatedAdmins> { DelegatedAdminsScreen(::navigateUp, ::navigate) }
         composable<AddDelegatedAdmin>{ AddDelegatedAdminScreen(it.toRoute(), ::navigateUp) }
         composable<DeviceInfo> { DeviceInfoScreen(::navigateUp) }
         composable<LockScreenInfo> { LockScreenInfoScreen(::navigateUp) }
         composable<SupportMessage> { SupportMessageScreen(::navigateUp) }
-        composable<TransferOwnership> {
-            TransferOwnershipScreen(::navigateUp) {
-                navController.navigate(WorkModes(false)) {
-                    popUpTo(Home) { inclusive = true }
-                }
-            }
-        }
+        composable<TransferOwnership> { TransferOwnershipScreen(::navigateUp) { navController.navigate(WorkModes(false)) { popUpTo(Home) { inclusive = true } } } }
 
         composable<SystemManager> { SystemManagerScreen(::navigateUp, ::navigate) }
         composable<SystemOptions> { SystemOptionsScreen(::navigateUp) }
@@ -354,7 +367,6 @@ fun Home(vm: MyViewModel, onLock: () -> Unit) {
         composable<ChangeTimeZone> { ChangeTimeZoneScreen(::navigateUp) }
         composable<AutoTimePolicy> { AutoTimePolicyScreen(::navigateUp) }
         composable<AutoTimeZonePolicy> { AutoTimeZonePolicyScreen(::navigateUp) }
-        //composable<> { KeyPairs(::navigateUp) }
         composable<ContentProtectionPolicy> { ContentProtectionPolicyScreen(::navigateUp) }
         composable<PermissionPolicy> { PermissionPolicyScreen(::navigateUp) }
         composable<MtePolicy> { MtePolicyScreen(::navigateUp) }
@@ -375,9 +387,7 @@ fun Home(vm: MyViewModel, onLock: () -> Unit) {
         composable<WifiSecurityLevel> { WifiSecurityLevelScreen(::navigateUp) }
         composable<WifiSsidPolicyScreen> { WifiSsidPolicyScreen(::navigateUp) }
         composable<QueryNetworkStats> { NetworkStatsScreen(::navigateUp, ::navigate) }
-        composable<NetworkStatsViewer>(mapOf(serializableNavTypePair<List<NetworkStatsViewer.Data>>())) {
-            NetworkStatsViewerScreen(it.toRoute(), ::navigateUp)
-        }
+        composable<NetworkStatsViewer>(mapOf(serializableNavTypePair<List<NetworkStatsViewer.Data>>())) { NetworkStatsViewerScreen(it.toRoute(), ::navigateUp) }
         composable<PrivateDns> { PrivateDnsScreen(::navigateUp) }
         composable<AlwaysOnVpnPackage> { AlwaysOnVpnPackageScreen(::navigateUp) }
         composable<RecommendedGlobalProxy> { RecommendedGlobalProxyScreen(::navigateUp) }
@@ -395,24 +405,8 @@ fun Home(vm: MyViewModel, onLock: () -> Unit) {
         composable<CrossProfileIntentFilter> { CrossProfileIntentFilterScreen(::navigateUp) }
         composable<DeleteWorkProfile> { DeleteWorkProfileScreen(::navigateUp) }
 
-        composable<ApplicationsList> {
-            AppChooserScreen(it.toRoute(), { dest ->
-                if(dest == null) navigateUp() else navigate(ApplicationDetails(dest))
-            }, {
-                SharedPrefs(context).applicationsListView = false
-                navController.navigate(ApplicationsFeatures) {
-                    popUpTo(Home)
-                }
-            })
-        }
-        composable<ApplicationsFeatures> {
-            ApplicationsFeaturesScreen(::navigateUp, ::navigate) {
-                SharedPrefs(context).applicationsListView = true
-                navController.navigate(ApplicationsList(true)) {
-                    popUpTo(Home)
-                }
-            }
-        }
+        composable<ApplicationsList> { AppChooserScreen(it.toRoute(), { dest -> if(dest == null) navigateUp() else navigate(ApplicationDetails(dest)) }, { SharedPrefs(context).applicationsListView = false; navController.navigate(ApplicationsFeatures) { popUpTo(Home) } }) }
+        composable<ApplicationsFeatures> { ApplicationsFeaturesScreen(::navigateUp, ::navigate) { SharedPrefs(context).applicationsListView = true; navController.navigate(ApplicationsList(true)) { popUpTo(Home) } } }
         composable<ApplicationDetails> { ApplicationDetailsScreen(it.toRoute(), ::navigateUp, ::navigate) }
         composable<Suspend> { SuspendScreen(::navigateUp) }
         composable<Hide> { HideScreen(::navigateUp) }
@@ -432,17 +426,9 @@ fun Home(vm: MyViewModel, onLock: () -> Unit) {
         composable<EnableSystemApp> { EnableSystemAppScreen(::navigateUp) }
         composable<SetDefaultDialer> { SetDefaultDialerScreen(::navigateUp) }
 
-        composable<UserRestriction> {
-            UserRestrictionScreen(::navigateUp) {
-                navigate(it)
-            }
-        }
-        composable<UserRestrictionEditor> {
-            UserRestrictionEditorScreen(::navigateUp)
-        }
-        composable<UserRestrictionOptions>(mapOf(serializableNavTypePair<List<Restriction>>())) {
-            UserRestrictionOptionsScreen(it.toRoute(), ::navigateUp)
-        }
+        composable<UserRestriction> { UserRestrictionScreen(::navigateUp) { navigate(it) } }
+        composable<UserRestrictionEditor> { UserRestrictionEditorScreen(::navigateUp) }
+        composable<UserRestrictionOptions>(mapOf(serializableNavTypePair<List<Restriction>>())) { UserRestrictionOptionsScreen(it.toRoute(), ::navigateUp) }
 
         composable<Users> { UsersScreen(::navigateUp, ::navigate) }
         composable<UserInfo> { UserInfoScreen(::navigateUp) }
@@ -463,31 +449,25 @@ fun Home(vm: MyViewModel, onLock: () -> Unit) {
 
         composable<Settings> { SettingsScreen(::navigateUp, ::navigate) }
         composable<SettingsOptions> { SettingsOptionsScreen(::navigateUp) }
-        composable<Appearance> {
-            val theme by vm.theme.collectAsStateWithLifecycle()
-            AppearanceScreen(::navigateUp, theme) { vm.theme.value = it }
-        }
+        composable<Appearance> { val theme by vm.theme.collectAsStateWithLifecycle(); AppearanceScreen(::navigateUp, theme) { vm.theme.value = it } }
         composable<AppLockSettings> { AppLockSettingsScreen(::navigateUp) }
         composable<ApiSettings> { ApiSettings(::navigateUp) }
         composable<Notifications> { NotificationsScreen(::navigateUp) }
         composable<About> { AboutScreen(::navigateUp) }
         composable<StealthSettings> { StealthSettingsScreen(::navigateUp) }
     }
+
     DisposableEffect(lifecycleOwner) {
         val sp = SharedPrefs(context)
         val observer = LifecycleEventObserver { _, event ->
-            if (
-                (event == Lifecycle.Event.ON_CREATE && !sp.lockPasswordHash.isNullOrEmpty()) ||
-                (event == Lifecycle.Event.ON_RESUME && sp.lockWhenLeaving)
-            ) {
+            if ((event == Lifecycle.Event.ON_CREATE && !sp.lockPasswordHash.isNullOrEmpty()) || (event == Lifecycle.Event.ON_RESUME && sp.lockWhenLeaving)) {
                 onLock()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+
     LaunchedEffect(Unit) {
         val dpm = context.getDPM()
         val sp = SharedPrefs(context)
@@ -500,8 +480,6 @@ fun Home(vm: MyViewModel, onLock: () -> Unit) {
     }
     DhizukuErrorDialog()
 }
-
-@Serializable private object Home
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -527,16 +505,15 @@ private fun HomeScreen(onNavigate: (Any) -> Unit) {
             if(privilege.device || privilege.profile) {
                 HomePageItem(R.string.system, R.drawable.android_fill0) { onNavigate(SystemManager) }
                 HomePageItem(R.string.network, R.drawable.wifi_fill0) { onNavigate(Network) }
+                
+                // --- כפתור חדש לחסימת מסכים ---
+                HomePageItem(R.string.system_security, R.drawable.security_fill0) { onNavigate(BlockedScreens) } 
             }
             if(privilege.work) {
-                HomePageItem(R.string.work_profile, R.drawable.work_fill0) {
-                    onNavigate(WorkProfile)
-                }
+                HomePageItem(R.string.work_profile, R.drawable.work_fill0) { onNavigate(WorkProfile) }
             }
             if(privilege.device || privilege.profile) {
-                HomePageItem(R.string.applications, R.drawable.apps_fill0) {
-                    onNavigate(if(SharedPrefs(context).applicationsListView) ApplicationsList(true) else ApplicationsFeatures)
-                }
+                HomePageItem(R.string.applications, R.drawable.apps_fill0) { onNavigate(if(SharedPrefs(context).applicationsListView) ApplicationsList(true) else ApplicationsFeatures) }
                 if(VERSION.SDK_INT >= 24) {
                     HomePageItem(R.string.user_restriction, R.drawable.person_off) { onNavigate(UserRestriction) }
                 }
@@ -548,26 +525,56 @@ private fun HomeScreen(onNavigate: (Any) -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BlockedScreensSettingsScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val sp = remember { SharedPrefs(context) }
+    val screens = mapOf(
+        "פרטי אפליקציה (Force Stop)" to "com.android.settings.applications.InstalledAppDetails",
+        "תיקון צבעים" to "com.android.settings.Settings\$AccessibilityDaltonizerSettingsActivity",
+        "היפוך צבעים" to "com.android.settings.Settings\$AccessibilityInversionSettingsActivity",
+        "אפשרויות מפתח" to "com.android.settings.Settings\$DevelopmentSettingsDashboardActivity"
+    )
+
+    Scaffold(
+        topBar = {
+            LargeTopAppBar(
+                title = { Text(stringResource(R.string.system_security)) },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) } }
+            )
+        }
+    ) { padding ->
+        Column(modifier = Modifier.padding(padding).verticalScroll(rememberScrollState())) {
+            screens.forEach { (label, path) ->
+                var isChecked by remember { mutableStateOf(sp.blockedActivities.contains(path)) }
+                Row(
+                    Modifier.fillMaxWidth().clickable {
+                        isChecked = !isChecked
+                        val current = sp.blockedActivities.toMutableSet()
+                        if (isChecked) current.add(path) else current.remove(path)
+                        sp.blockedActivities = current
+                    }.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(checked = isChecked, onCheckedChange = null)
+                    Text(label, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun HomePageItem(name: Int, imgVector: Int, onClick: () -> Unit) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Spacer(Modifier.padding(start = 30.dp))
-        Icon(
-            painter = painterResource(imgVector),
-            contentDescription = null
-        )
+        Icon(painter = painterResource(imgVector), contentDescription = null)
         Spacer(Modifier.padding(start = 15.dp))
-        Text(
-            text = stringResource(name),
-            style = typography.headlineSmall,
-            modifier = Modifier.padding(bottom = if(zhCN) { 2 } else { 0 }.dp)
-        )
+        Text(text = stringResource(name), style = typography.headlineSmall)
     }
 }
 
@@ -576,25 +583,13 @@ private fun DhizukuErrorDialog() {
     val status by dhizukuErrorStatus.collectAsState()
     if (status != 0) {
         val sp = SharedPrefs(LocalContext.current)
-        LaunchedEffect(Unit) {
-            sp.dhizuku = false
-        }
+        LaunchedEffect(Unit) { sp.dhizuku = false }
         AlertDialog(
             onDismissRequest = { dhizukuErrorStatus.value = 0 },
-            confirmButton = {
-                TextButton(onClick = { dhizukuErrorStatus.value = 0 }) {
-                    Text(stringResource(R.string.confirm))
-                }
-            },
+            confirmButton = { TextButton(onClick = { dhizukuErrorStatus.value = 0 }) { Text(stringResource(R.string.confirm)) } },
             title = { Text(stringResource(R.string.dhizuku)) },
             text = {
-                var text = stringResource(
-                    when(status){
-                        1 -> R.string.failed_to_init_dhizuku
-                        2 -> R.string.dhizuku_permission_not_granted
-                        else -> R.string.failed_to_init_dhizuku
-                    }
-                )
+                var text = stringResource(when(status){ 1 -> R.string.failed_to_init_dhizuku 2 -> R.string.dhizuku_permission_not_granted else -> R.string.failed_to_init_dhizuku })
                 if(sp.dhizuku) text += "\n" + stringResource(R.string.dhizuku_mode_disabled)
                 Text(text)
             }
