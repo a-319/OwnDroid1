@@ -258,9 +258,9 @@ import kotlinx.serialization.Serializable
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.util.Locale
 
-// הגדרות ניווט
-@Serializable private object Home
-@Serializable private object BlockedScreens
+// הגדרות ניווט - הסרת private כדי שיהיו נגישות
+@Serializable object Home
+@Serializable object BlockedScreens
 
 @ExperimentalMaterial3Api
 class MainActivity : FragmentActivity() {
@@ -315,7 +315,6 @@ class MainActivity : FragmentActivity() {
         super.onResume()
         val sp = SharedPrefs(applicationContext)
         if (sp.dhizuku) {
-            // שימוש ב-Dhizuku המקורי (לא rikka.shizuku)
             if (Dhizuku.init(applicationContext)) {
                 if (!dhizukuPermissionGranted()) { 
                     dhizukuErrorStatus.value = 2 
@@ -659,7 +658,6 @@ fun HomePageItem(name: Int, imgVector: Int, onClick: () -> Unit) {
         Text(
             text = stringResource(name),
             style = typography.headlineSmall,
-            // תמיכה בפונט סיני - padding נוסף
             modifier = Modifier.padding(bottom = if(zhCN) { 2 } else { 0 }.dp)
         )
     }
