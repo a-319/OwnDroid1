@@ -9,13 +9,13 @@ import kotlin.reflect.KProperty
 
 class SharedPrefs(context: Context) {
     val sharedPrefs: SharedPreferences = context.getSharedPreferences("data", Context.MODE_PRIVATE)
-
     var managedProfileActivated by BooleanSharedPref("managed_profile_activated")
     var dhizuku by BooleanSharedPref("dhizuku_mode")
     var isDefaultAffiliationIdSet by BooleanSharedPref("default_affiliation_id_set")
     var displayDangerousFeatures by BooleanSharedPref("display_dangerous_features")
     var apiKeyHash by StringSharedPref("api_key_hash")
     var materialYou by BooleanSharedPref("theme.material_you", Build.VERSION.SDK_INT >= 31)
+    /** -1: follow system, 0: off, 1: on */
     var darkTheme by IntSharedPref("theme.dark", -1)
     var blackTheme by BooleanSharedPref("theme.black")
     var lockPasswordHash by StringSharedPref("lock.password.sha256")
@@ -27,7 +27,7 @@ class SharedPrefs(context: Context) {
     var notifications by StringSharedPref("notifications")
     var shortcutKey by StringSharedPref("shortcut_key")
 
-    // הוספה: רשימת המסכים החסומים
+    // ✅ הוספה: רשימת המסכים החסומים
     var blockedActivities by StringSetSharedPref("blocked_activities")
 }
 
@@ -52,6 +52,7 @@ private class IntSharedPref(val key: String, val defValue: Int = 0): ReadWritePr
         thisRef.sharedPrefs.edit(true) { putInt(key, value) }
 }
 
+// ✅ הוספה: מחלקה חדשה לטיפול ב-Set<String>
 private class StringSetSharedPref(val key: String) : ReadWriteProperty<SharedPrefs, Set<String>> {
     override fun getValue(thisRef: SharedPrefs, property: KProperty<*>): Set<String> =
         thisRef.sharedPrefs.getStringSet(key, emptySet()) ?: emptySet()
